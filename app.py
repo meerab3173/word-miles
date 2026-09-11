@@ -912,15 +912,12 @@ def results_page(room):
         f"""
         <div class="big-card">
             <h2>🎉 Round Results</h2>
-
             <p>
                 <b>Score:</b> {result["total_score"]} points
             </p>
-
             <p>
                 <b>XP Earned:</b> +{result["earned_xp"]} XP
             </p>
-
             <p>
                 <b>Distance Travelled:</b> +{result["earned_km"]} km
             </p>
@@ -987,11 +984,9 @@ def results_page(room):
             f"""
             <div class="big-card">
                 <h1>🎉 YOU MADE IT! 🎉</h1>
-
                 <p>
                     {room["player1_city"]} → {room["player2_city"]}
                 </p>
-
                 <h2>
                     Distance couldn't stop you two. 💗
                 </h2>
