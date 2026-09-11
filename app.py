@@ -3,14 +3,19 @@
 # ============================================
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
-from game_data import get_random_challenge, get_random_reaction, get_level
-from game_logic import (
-    find_shared_words,
-    calculate_total_score,
-    calculate_distance
-)
+from game_data import get_random_reaction, get_level
 from map import show_journey_map
+from multiplayer import (
+    create_room,
+    join_room,
+    get_room,
+    start_round,
+    submit_words,
+    back_to_lobby,
+    reset_journey
+)
 
 
 # ============================================
@@ -241,6 +246,23 @@ st.markdown(
         background: linear-gradient(90deg, #FF8FAB, #E75480) !important;
     }
 
+    /* ---------- Room code ---------- */
+
+    .room-code {
+        text-align: center;
+        font-family: 'Fredoka', sans-serif;
+        font-size: 44px;
+        font-weight: 700;
+        letter-spacing: 12px;
+        color: #E75480;
+        background: linear-gradient(145deg, #FFFFFF, #FFE4EC);
+        border: 3px dashed #FFB6C9;
+        border-radius: 20px;
+        padding: 18px 10px;
+        margin: 20px 0;
+        animation: glow 2s ease-in-out infinite alternate;
+    }
+
     </style>
     """,
     unsafe_allow_html=True
@@ -249,52 +271,48 @@ st.markdown(
 
 # ============================================
 # SESSION STATE
+#
+# Only identity lives here (which room this
+# device is in, and whether it's player1 or
+# player2). The actual game state lives in the
+# shared room store in multiplayer.py so both
+# devices see the same thing.
 # ============================================
 
-if "page" not in st.session_state:
-    st.session_state.page = "home"
+if "room_code" not in st.session_state:
+    st.session_state.room_code = None
 
-if "player1_name" not in st.session_state:
-    st.session_state.player1_name = ""
+if "my_role" not in st.session_state:
+    st.session_state.my_role = None
 
-if "player2_name" not in st.session_state:
-    st.session_state.player2_name = ""
+# Restore identity after a page refresh using the URL,
+# so reloading the tab doesn't kick a player out.
+if st.session_state.room_code is None:
 
-if "player1_city" not in st.session_state:
-    st.session_state.player1_city = ""
+    qp_room = st.query_params.get("room")
+    qp_role = st.query_params.get("role")
 
-if "player2_city" not in st.session_state:
-    st.session_state.player2_city = ""
+    if (
+        qp_room
+        and qp_role in ("player1", "player2")
+        and get_room(qp_room) is not None
+    ):
 
-if "distance" not in st.session_state:
-    st.session_state.distance = 0
+        st.session_state.room_code = qp_room.strip().upper()
+        st.session_state.my_role = qp_role
 
-if "xp" not in st.session_state:
-    st.session_state.xp = 0
 
-if "games_played" not in st.session_state:
-    st.session_state.games_played = 0
+def _remember_in_url(code, role):
 
-if "shared_words_total" not in st.session_state:
-    st.session_state.shared_words_total = 0
+    st.query_params["room"] = code
+    st.query_params["role"] = role
 
-if "challenge" not in st.session_state:
-    st.session_state.challenge = get_random_challenge()
 
-if "player1_words" not in st.session_state:
-    st.session_state.player1_words = []
+def _leave_room():
 
-if "player2_words" not in st.session_state:
-    st.session_state.player2_words = []
-
-if "player1_submitted" not in st.session_state:
-    st.session_state.player1_submitted = False
-
-if "player2_submitted" not in st.session_state:
-    st.session_state.player2_submitted = False
-
-if "result" not in st.session_state:
-    st.session_state.result = None
+    st.session_state.room_code = None
+    st.session_state.my_role = None
+    st.query_params.clear()
 
 
 # ============================================
@@ -318,110 +336,208 @@ def home_page():
         <div class="big-card">
             <h2>🌍 How far can your friendship travel?</h2>
             <p>
-                You and your best friend receive the same letters,
-                build words independently, and earn kilometers
-                together.
+                Create a room, send the code to your best friend, and
+                play together from two different devices — anywhere
+                in the world. You'll each get the same letters, build
+                words independently, and earn kilometers together.
             </p>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    st.markdown("### 💗 Tell us about your friendship")
-
-    player1_name = st.text_input(
-        "Your name",
-        value=st.session_state.player1_name,
-        placeholder="e.g. Meerab"
+    tab_create, tab_join = st.tabs(
+        ["✨ Create a Room", "🔑 Join a Room"]
     )
 
-    player1_city = st.text_input(
-        "Your city",
-        value=st.session_state.player1_city,
-        placeholder="e.g. Islamabad"
-    )
+    # --------------------------------------------
+    # CREATE ROOM
+    # --------------------------------------------
 
-    player2_name = st.text_input(
-        "Your friend's name",
-        value=st.session_state.player2_name,
-        placeholder="e.g. Sarah"
-    )
+    with tab_create:
 
-    player2_city = st.text_input(
-        "Your friend's city",
-        value=st.session_state.player2_city,
-        placeholder="e.g. Karachi"
-    )
+        st.markdown("#### Start a new journey")
 
-    if st.button(
-        "💗 Start Our Journey",
-        use_container_width=True
-    ):
+        create_name = st.text_input(
+            "Your name",
+            placeholder="e.g. Meerab",
+            key="create_name"
+        )
 
-        if (
-            player1_name.strip()
-            and player2_name.strip()
-            and player1_city.strip()
-            and player2_city.strip()
+        create_city = st.text_input(
+            "Your city",
+            placeholder="e.g. Islamabad",
+            key="create_city"
+        )
+
+        if st.button(
+            "💗 Create Room",
+            use_container_width=True,
+            key="create_room_btn"
         ):
 
-            st.session_state.player1_name = player1_name
-            st.session_state.player2_name = player2_name
+            if create_name.strip() and create_city.strip():
 
-            st.session_state.player1_city = player1_city
-            st.session_state.player2_city = player2_city
+                code = create_room(
+                    create_name.strip(),
+                    create_city.strip()
+                )
 
-            st.session_state.distance = 0
-            st.session_state.xp = 0
-            st.session_state.games_played = 0
-            st.session_state.shared_words_total = 0
+                st.session_state.room_code = code
+                st.session_state.my_role = "player1"
 
-            st.session_state.challenge = get_random_challenge()
+                _remember_in_url(code, "player1")
 
-            st.session_state.page = "dashboard"
+                st.rerun()
 
-            st.rerun()
+            else:
 
-        else:
+                st.warning(
+                    "Please enter your name and city. 💗"
+                )
 
-            st.warning(
-                "Please fill in all four fields before starting. 💗"
-            )
+    # --------------------------------------------
+    # JOIN ROOM
+    # --------------------------------------------
+
+    with tab_join:
+
+        st.markdown("#### Join your friend's journey")
+
+        join_code = st.text_input(
+            "Room code",
+            placeholder="e.g. AB3D",
+            key="join_code"
+        ).strip().upper()
+
+        join_name = st.text_input(
+            "Your name",
+            placeholder="e.g. Sarah",
+            key="join_name"
+        )
+
+        join_city = st.text_input(
+            "Your city",
+            placeholder="e.g. Karachi",
+            key="join_city"
+        )
+
+        if st.button(
+            "🔑 Join Room",
+            use_container_width=True,
+            key="join_room_btn"
+        ):
+
+            if join_code and join_name.strip() and join_city.strip():
+
+                success, error = join_room(
+                    join_code,
+                    join_name.strip(),
+                    join_city.strip()
+                )
+
+                if success:
+
+                    st.session_state.room_code = join_code
+                    st.session_state.my_role = "player2"
+
+                    _remember_in_url(join_code, "player2")
+
+                    st.rerun()
+
+                else:
+
+                    st.warning(error)
+
+            else:
+
+                st.warning(
+                    "Please fill in the room code, your name, "
+                    "and your city. 💗"
+                )
 
 
 # ============================================
-# DASHBOARD
+# LOBBY (shared room "waiting room" + dashboard)
 # ============================================
 
-def dashboard():
+def lobby_page(room):
+
+    code = st.session_state.room_code
 
     st.markdown(
         '<div class="title">WORD MILES 💗</div>',
         unsafe_allow_html=True
     )
 
+    # --------------------------------------------
+    # WAITING FOR FRIEND TO JOIN
+    # --------------------------------------------
+
+    if not room["player2_joined"]:
+
+        st.markdown(
+            '<div class="subtitle">Waiting for your friend to join...</div>',
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            """
+            <div class="big-card">
+                <h2>📨 Share this code with your friend</h2>
+                <p>
+                    They can open this same app on their own device
+                    and enter this code under "Join a Room".
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            f'<div class="room-code">{code}</div>',
+            unsafe_allow_html=True
+        )
+
+        st.info(
+            "This page updates automatically the moment they join. 💗"
+        )
+
+        if st.button(
+            "🚪 Leave Room",
+            use_container_width=True
+        ):
+
+            _leave_room()
+
+            st.rerun()
+
+        st_autorefresh(interval=2500, key="lobby_wait_refresh")
+
+        return
+
+    # --------------------------------------------
+    # BOTH PLAYERS JOINED
+    # --------------------------------------------
+
     st.markdown(
         f"""
         <div class="subtitle">
-            {st.session_state.player1_name}
+            {room["player1_name"]}
             💗
-            {st.session_state.player2_name}
+            {room["player2_name"]}
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    # --------------------------------------------
-    # CITY INFORMATION
-    # --------------------------------------------
-
     st.markdown(
         f"""
         <div class="big-card">
             <h2>
-                📍 {st.session_state.player1_city}
+                📍 {room["player1_city"]}
                 &nbsp; → &nbsp;
-                {st.session_state.player2_city} 📍
+                {room["player2_city"]} 📍
             </h2>
             <p>
                 Your friendship journey continues...
@@ -444,7 +560,7 @@ def dashboard():
             <div class="stat-card">
                 <div class="stat-icon">🛣️</div>
                 <div class="stat-number">
-                    {st.session_state.distance}
+                    {room["distance"]}
                 </div>
                 <div class="stat-label">
                     KM TRAVELLED
@@ -461,7 +577,7 @@ def dashboard():
             <div class="stat-card">
                 <div class="stat-icon">⭐</div>
                 <div class="stat-number">
-                    {st.session_state.xp}
+                    {room["xp"]}
                 </div>
                 <div class="stat-label">
                     XP
@@ -478,7 +594,7 @@ def dashboard():
             <div class="stat-card">
                 <div class="stat-icon">🎮</div>
                 <div class="stat-number">
-                    {st.session_state.games_played}
+                    {room["games_played"]}
                 </div>
                 <div class="stat-label">
                     GAMES
@@ -499,7 +615,7 @@ def dashboard():
             <div class="stat-card">
                 <div class="stat-icon">💌</div>
                 <div class="stat-number">
-                    {st.session_state.shared_words_total}
+                    {room["shared_words_total"]}
                 </div>
                 <div class="stat-label">
                     SHARED WORDS
@@ -512,7 +628,7 @@ def dashboard():
     with col5:
 
         current_level = get_level(
-            st.session_state.xp
+            room["xp"]
         )
 
         st.markdown(
@@ -539,7 +655,7 @@ def dashboard():
     st.markdown("## 🗺️ Our Journey")
 
     show_journey_map(
-        st.session_state.distance
+        room["distance"]
     )
 
     # ============================================
@@ -553,22 +669,12 @@ def dashboard():
         use_container_width=True
     ):
 
-        st.session_state.challenge = get_random_challenge()
-
-        st.session_state.player1_words = []
-        st.session_state.player2_words = []
-
-        st.session_state.player1_submitted = False
-        st.session_state.player2_submitted = False
-
-        st.session_state.result = None
-
-        st.session_state.page = "player1"
+        start_round(code)
 
         st.rerun()
 
     # ============================================
-    # RESET BUTTON
+    # RESET / LEAVE BUTTONS
     # ============================================
 
     if st.button(
@@ -576,23 +682,29 @@ def dashboard():
         use_container_width=True
     ):
 
-        st.session_state.distance = 0
-        st.session_state.xp = 0
-        st.session_state.games_played = 0
-        st.session_state.shared_words_total = 0
-
-        st.session_state.page = "home"
+        reset_journey(code)
 
         st.rerun()
+
+    if st.button(
+        "🚪 Leave Room",
+        use_container_width=True
+    ):
+
+        _leave_room()
+
+        st.rerun()
+
+    st_autorefresh(interval=4000, key="lobby_sync_refresh")
 
 
 # ============================================
 # SHOW LETTERS
 # ============================================
 
-def show_letters():
+def show_letters(challenge):
 
-    letters = st.session_state.challenge["letters"]
+    letters = challenge["letters"]
 
     tiles_html = ""
 
@@ -613,10 +725,20 @@ def show_letters():
 
 
 # ============================================
-# PLAYER 1 PAGE
+# PLAY PAGE (both players play simultaneously,
+# each from their own device)
 # ============================================
 
-def player1_page():
+def play_page(room):
+
+    code = st.session_state.room_code
+    my_role = st.session_state.my_role
+    other_role = "player2" if my_role == "player1" else "player1"
+
+    my_name = room[f"{my_role}_name"]
+    other_name = room[f"{other_role}_name"]
+
+    challenge = room["challenge"]
 
     st.markdown(
         '<div class="title">YOUR TURN 💗</div>',
@@ -624,15 +746,9 @@ def player1_page():
     )
 
     st.markdown(
-        f"""
-        <div class="subtitle">
-            {st.session_state.player1_name}
-        </div>
-        """,
+        f'<div class="subtitle">{my_name}</div>',
         unsafe_allow_html=True
     )
-
-    challenge = st.session_state.challenge
 
     st.markdown(
         f"""
@@ -646,150 +762,75 @@ def player1_page():
 
     st.markdown("### 🔤 Your letters")
 
-    show_letters()
+    show_letters(challenge)
 
-    st.info(
-        "Enter one word per line. Try to think of as many "
-        "words as you can!"
-    )
+    already_submitted = room[f"{my_role}_submitted"]
 
-    words_input = st.text_area(
-        "Your words",
-        placeholder="LOVE\nFRIEND\nSMILE\n...",
-        height=180
-    )
+    if already_submitted:
 
-    if st.button(
-        "🔒 Submit My Words",
-        use_container_width=True
-    ):
+        st.markdown(
+            f"""
+            <div class="big-card">
+                <h2>✅ Words locked in!</h2>
+                <p>Waiting for {other_name} to submit their words...</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-        words = words_input.split("\n")
+        st_autorefresh(interval=2000, key="play_wait_refresh")
 
-        st.session_state.player1_words = words
-        st.session_state.player1_submitted = True
+    else:
 
-        st.session_state.page = "player2"
+        st.info(
+            "Don't peek at your friend's answers! Enter one word "
+            "per line, try to think of as many as you can."
+        )
 
-        st.rerun()
+        words_input = st.text_area(
+            "Your words",
+            placeholder="LOVE\nFRIEND\nSMILE\n...",
+            height=180,
+            key=f"words_{code}_{my_role}_{room['round_number']}"
+        )
 
+        if st.button(
+            "🔒 Submit My Words",
+            use_container_width=True
+        ):
 
-# ============================================
-# PLAYER 2 PAGE
-# ============================================
+            words = words_input.split("\n")
 
-def player2_page():
+            submit_words(code, my_role, words)
 
-    st.markdown(
-        '<div class="title">FRIEND\'S TURN 💗</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f"""
-        <div class="subtitle">
-            {st.session_state.player2_name}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    challenge = st.session_state.challenge
-
-    st.markdown(
-        f"""
-        <div class="big-card">
-            <h2>{challenge["theme"]}</h2>
-            <p>{challenge["hint"]}</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown("### 🔤 Same letters!")
-
-    show_letters()
-
-    st.info(
-        "Don't look at your friend's answers! "
-        "Enter your own words."
-    )
-
-    words_input = st.text_area(
-        "Your words",
-        placeholder="LOVE\nFRIEND\nSMILE\n...",
-        height=180
-    )
-
-    if st.button(
-        "🔒 Submit My Words",
-        use_container_width=True
-    ):
-
-        words = words_input.split("\n")
-
-        st.session_state.player2_words = words
-        st.session_state.player2_submitted = True
-
-        st.session_state.page = "results"
-
-        st.rerun()
+            st.rerun()
 
 
 # ============================================
 # RESULTS PAGE
 # ============================================
 
-def results_page():
+def results_page(room):
+
+    code = st.session_state.room_code
 
     st.markdown(
         '<div class="result-title">REVEAL TIME! 💗</div>',
         unsafe_allow_html=True
     )
 
-    player1_words = st.session_state.player1_words
-    player2_words = st.session_state.player2_words
+    result = room["last_result"]
 
-    # --------------------------------------------
-    # FIND SHARED WORDS
-    # --------------------------------------------
+    if result is None:
 
-    shared_words = find_shared_words(
-        player1_words,
-        player2_words
-    )
+        st.info("Scoring your round...")
 
-    # --------------------------------------------
-    # CALCULATE SCORE
-    # --------------------------------------------
+        st_autorefresh(interval=1500, key="results_wait_refresh")
 
-    total_score, shared_words = calculate_total_score(
-        player1_words,
-        player2_words
-    )
+        return
 
-    earned_xp = total_score
-
-    earned_km = calculate_distance(
-        total_score
-    )
-
-    # --------------------------------------------
-    # UPDATE GAME STATS
-    # --------------------------------------------
-
-    st.session_state.xp += earned_xp
-
-    st.session_state.distance += earned_km
-
-    st.session_state.games_played += 1
-
-    st.session_state.shared_words_total += len(
-        shared_words
-    )
-
-    # Prevent the result from being added repeatedly
-    st.session_state.result = True
+    player1_words = room["player1_words"]
+    player2_words = room["player2_words"]
 
     # --------------------------------------------
     # PLAYER ANSWERS
@@ -800,7 +841,7 @@ def results_page():
     with col1:
 
         st.markdown(
-            f"### 💗 {st.session_state.player1_name}"
+            f"### 💗 {room['player1_name']}"
         )
 
         for word in player1_words:
@@ -814,7 +855,7 @@ def results_page():
     with col2:
 
         st.markdown(
-            f"### 💗 {st.session_state.player2_name}"
+            f"### 💗 {room['player2_name']}"
         )
 
         for word in player2_words:
@@ -830,6 +871,8 @@ def results_page():
     # --------------------------------------------
 
     st.write("")
+
+    shared_words = result["shared_words"]
 
     if shared_words:
 
@@ -871,15 +914,15 @@ def results_page():
             <h2>🎉 Round Results</h2>
 
             <p>
-                <b>Score:</b> {total_score} points
+                <b>Score:</b> {result["total_score"]} points
             </p>
 
             <p>
-                <b>XP Earned:</b> +{earned_xp} XP
+                <b>XP Earned:</b> +{result["earned_xp"]} XP
             </p>
 
             <p>
-                <b>Distance Travelled:</b> +{earned_km} km
+                <b>Distance Travelled:</b> +{result["earned_km"]} km
             </p>
         </div>
         """,
@@ -891,7 +934,7 @@ def results_page():
     # --------------------------------------------
 
     current_level = get_level(
-        st.session_state.xp
+        room["xp"]
     )
 
     st.markdown(
@@ -913,7 +956,7 @@ def results_page():
     # --------------------------------------------
 
     journey_progress = min(
-        st.session_state.distance / 1184,
+        room["distance"] / 1184,
         1.0
     )
 
@@ -925,7 +968,7 @@ def results_page():
         f"""
         <div style="text-align:center;">
             🗺️
-            {st.session_state.distance}
+            {room["distance"]}
             / 1184 km travelled
         </div>
         """,
@@ -936,17 +979,17 @@ def results_page():
     # JOURNEY COMPLETE
     # --------------------------------------------
 
-    if st.session_state.distance >= 1184:
+    if room["distance"] >= 1184:
 
         st.balloons()
 
         st.markdown(
-            """
+            f"""
             <div class="big-card">
                 <h1>🎉 YOU MADE IT! 🎉</h1>
 
                 <p>
-                    Islamabad → Karachi
+                    {room["player1_city"]} → {room["player2_city"]}
                 </p>
 
                 <h2>
@@ -972,55 +1015,66 @@ def results_page():
             use_container_width=True
         ):
 
-            st.session_state.challenge = (
-                get_random_challenge()
-            )
-
-            st.session_state.player1_words = []
-            st.session_state.player2_words = []
-
-            st.session_state.player1_submitted = False
-            st.session_state.player2_submitted = False
-
-            st.session_state.result = None
-
-            st.session_state.page = "player1"
+            start_round(code)
 
             st.rerun()
 
     with col2:
 
         if st.button(
-            "🏠 Dashboard",
+            "🏠 Lobby",
             use_container_width=True
         ):
 
-            st.session_state.page = "dashboard"
+            back_to_lobby(code)
 
             st.rerun()
+
+    st_autorefresh(interval=3000, key="results_sync_refresh")
 
 
 # ============================================
 # PAGE ROUTING
 # ============================================
 
-if st.session_state.page == "home":
+if st.session_state.room_code is None:
 
     home_page()
 
-elif st.session_state.page == "dashboard":
+else:
 
-    dashboard()
+    current_room = get_room(st.session_state.room_code)
 
-elif st.session_state.page == "player1":
+    if current_room is None:
 
-    player1_page()
+        st.markdown(
+            '<div class="title">WORD MILES 💗</div>',
+            unsafe_allow_html=True
+        )
 
-elif st.session_state.page == "player2":
+        st.warning(
+            "This room no longer exists — the app may have "
+            "restarted. Please create or join a new one. 💗"
+        )
 
-    player2_page()
+        if st.button(
+            "🏠 Back to Home",
+            use_container_width=True
+        ):
 
-elif st.session_state.page == "results":
+            _leave_room()
 
-    results_page()
+            st.rerun()
+
+    elif current_room["stage"] == "playing":
+
+        play_page(current_room)
+
+    elif current_room["stage"] == "results":
+
+        results_page(current_room)
+
+    else:
+
+        lobby_page(current_room)
 
