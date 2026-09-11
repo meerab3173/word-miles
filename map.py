@@ -6,54 +6,45 @@ import streamlit as st
 import plotly.graph_objects as go
 
 
-# Islamabad and Karachi coordinates
-ISLAMABAD = {
-    "name": "Islamabad",
-    "lat": 33.6844,
-    "lon": 73.0479
-}
-
-KARACHI = {
-    "name": "Karachi",
-    "lat": 24.8607,
-    "lon": 67.0011
-}
-
-# Approximate road distance
-TOTAL_DISTANCE = 1184
-
-
-def get_position(progress_km):
+def get_position(progress_km, start, end, total_distance_km):
     """
-    Calculates the position of the heart along
-    the Islamabad-Karachi journey.
+    Calculates the current position along the journey
+    between the two players' cities.
     """
 
-    # Keep progress between 0 and total distance
-    progress_km = max(0, min(progress_km, TOTAL_DISTANCE))
+    total_distance_km = max(total_distance_km, 1)
 
-    percentage = progress_km / TOTAL_DISTANCE
+    progress_km = max(0, min(progress_km, total_distance_km))
 
-    # Calculate latitude and longitude
-    lat = (
-        ISLAMABAD["lat"]
-        + (KARACHI["lat"] - ISLAMABAD["lat"]) * percentage
-    )
+    percentage = progress_km / total_distance_km
 
-    lon = (
-        ISLAMABAD["lon"]
-        + (KARACHI["lon"] - ISLAMABAD["lon"]) * percentage
-    )
+    lat = start["lat"] + (end["lat"] - start["lat"]) * percentage
+    lon = start["lon"] + (end["lon"] - start["lon"]) * percentage
 
     return lat, lon
 
 
-def show_journey_map(progress_km):
+def show_journey_map(progress_km, total_distance_km, start=None, end=None):
     """
-    Displays the Islamabad-Karachi journey map.
+    Displays the friendship journey map between the two
+    players' cities. Falls back to a simple distance readout
+    if either city couldn't be found on the map.
     """
 
-    current_lat, current_lon = get_position(progress_km)
+    if start is None or end is None:
+
+        st.info(
+            "Couldn't find one of your cities on the map, but "
+            "your journey still counts! 💗"
+        )
+
+        _show_progress_text(progress_km, total_distance_km)
+
+        return
+
+    current_lat, current_lon = get_position(
+        progress_km, start, end, total_distance_km
+    )
 
     fig = go.Figure()
 
@@ -64,12 +55,12 @@ def show_journey_map(progress_km):
     fig.add_trace(
         go.Scattergeo(
             lat=[
-                ISLAMABAD["lat"],
-                KARACHI["lat"]
+                start["lat"],
+                end["lat"]
             ],
             lon=[
-                ISLAMABAD["lon"],
-                KARACHI["lon"]
+                start["lon"],
+                end["lon"]
             ],
             mode="lines",
             line=dict(
@@ -98,13 +89,13 @@ def show_journey_map(progress_km):
     for percentage in checkpoint_percentages:
 
         lat = (
-            ISLAMABAD["lat"]
-            + (KARACHI["lat"] - ISLAMABAD["lat"]) * percentage
+            start["lat"]
+            + (end["lat"] - start["lat"]) * percentage
         )
 
         lon = (
-            ISLAMABAD["lon"]
-            + (KARACHI["lon"] - ISLAMABAD["lon"]) * percentage
+            start["lon"]
+            + (end["lon"] - start["lon"]) * percentage
         )
 
         checkpoint_lats.append(lat)
@@ -125,40 +116,40 @@ def show_journey_map(progress_km):
     )
 
     # --------------------------------------------
-    # Islamabad
+    # Start city
     # --------------------------------------------
 
     fig.add_trace(
         go.Scattergeo(
-            lat=[ISLAMABAD["lat"]],
-            lon=[ISLAMABAD["lon"]],
+            lat=[start["lat"]],
+            lon=[start["lon"]],
             mode="markers+text",
             marker=dict(
                 size=14,
                 color="#C9184A"
             ),
-            text=["📍 Islamabad"],
+            text=[f'📍 {start["name"]}'],
             textposition="top center",
-            name="Islamabad"
+            name=start["name"]
         )
     )
 
     # --------------------------------------------
-    # Karachi
+    # End city
     # --------------------------------------------
 
     fig.add_trace(
         go.Scattergeo(
-            lat=[KARACHI["lat"]],
-            lon=[KARACHI["lon"]],
+            lat=[end["lat"]],
+            lon=[end["lon"]],
             mode="markers+text",
             marker=dict(
                 size=14,
                 color="#C9184A"
             ),
-            text=["📍 Karachi"],
+            text=[f'📍 {end["name"]}'],
             textposition="bottom center",
-            name="Karachi"
+            name=end["name"]
         )
     )
 
@@ -214,12 +205,13 @@ def show_journey_map(progress_km):
         use_container_width=True
     )
 
-    # --------------------------------------------
-    # Journey information
-    # --------------------------------------------
+    _show_progress_text(progress_km, total_distance_km)
 
-    remaining = TOTAL_DISTANCE - progress_km
-    percentage = (progress_km / TOTAL_DISTANCE) * 100
+
+def _show_progress_text(progress_km, total_distance_km):
+
+    remaining = max(total_distance_km - progress_km, 0)
+    percentage = (progress_km / total_distance_km) * 100
 
     st.markdown(
         f"""

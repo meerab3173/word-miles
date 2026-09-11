@@ -17,6 +17,7 @@ import streamlit as st
 
 from game_data import get_random_challenge
 from game_logic import calculate_total_score, calculate_distance
+from geocode import geocode_city, haversine_km
 
 
 ROOM_CODE_CHARS = "".join(
@@ -27,6 +28,10 @@ ROOM_CODE_CHARS = "".join(
 ROOM_CODE_LENGTH = 4
 
 ROOM_MAX_AGE_SECONDS = 24 * 60 * 60
+
+# Used when a city couldn't be found on the map, so the
+# journey still has a target distance to travel towards.
+DEFAULT_TOTAL_DISTANCE_KM = 5000
 
 
 @st.cache_resource
@@ -70,6 +75,10 @@ def create_room(player1_name, player1_city):
     The creator becomes player1.
     """
 
+    # Geocode outside the lock -- it's a network call, and we
+    # don't want it blocking every other room in the process.
+    player1_coords = geocode_city(player1_city)
+
     store = _get_store()
 
     with store["lock"]:
@@ -81,13 +90,16 @@ def create_room(player1_name, player1_city):
         store["rooms"][code] = {
             "player1_name": player1_name,
             "player1_city": player1_city,
+            "player1_coords": player1_coords,
             "player2_name": "",
             "player2_city": "",
+            "player2_coords": None,
             "player2_joined": False,
             "distance": 0,
             "xp": 0,
             "games_played": 0,
             "shared_words_total": 0,
+            "total_distance_km": DEFAULT_TOTAL_DISTANCE_KM,
             "stage": "lobby",
             "challenge": None,
             "round_number": 0,
@@ -108,6 +120,8 @@ def join_room(code, player2_name, player2_city):
     Returns (success, error_message).
     """
 
+    player2_coords = geocode_city(player2_city)
+
     store = _get_store()
 
     code = code.strip().upper()
@@ -124,7 +138,23 @@ def join_room(code, player2_name, player2_city):
 
         room["player2_name"] = player2_name
         room["player2_city"] = player2_city
+        room["player2_coords"] = player2_coords
         room["player2_joined"] = True
+
+        player1_coords = room["player1_coords"]
+
+        if player1_coords and player2_coords:
+
+            room["total_distance_km"] = max(1, round(
+                haversine_km(
+                    player1_coords["lat"], player1_coords["lon"],
+                    player2_coords["lat"], player2_coords["lon"]
+                )
+            ))
+
+        else:
+
+            room["total_distance_km"] = DEFAULT_TOTAL_DISTANCE_KM
 
     return True, None
 

@@ -315,6 +315,23 @@ def _leave_room():
     st.query_params.clear()
 
 
+def _map_point(coords, city_name):
+    """
+    Combines geocoded coordinates with the name the player
+    actually typed, for the map. Returns None if the city
+    couldn't be found.
+    """
+
+    if coords is None:
+        return None
+
+    return {
+        "lat": coords["lat"],
+        "lon": coords["lon"],
+        "name": city_name
+    }
+
+
 # ============================================
 # HOME PAGE
 # ============================================
@@ -378,10 +395,12 @@ def home_page():
 
             if create_name.strip() and create_city.strip():
 
-                code = create_room(
-                    create_name.strip(),
-                    create_city.strip()
-                )
+                with st.spinner("Finding your city..."):
+
+                    code = create_room(
+                        create_name.strip(),
+                        create_city.strip()
+                    )
 
                 st.session_state.room_code = code
                 st.session_state.my_role = "player1"
@@ -430,11 +449,13 @@ def home_page():
 
             if join_code and join_name.strip() and join_city.strip():
 
-                success, error = join_room(
-                    join_code,
-                    join_name.strip(),
-                    join_city.strip()
-                )
+                with st.spinner("Finding your city..."):
+
+                    success, error = join_room(
+                        join_code,
+                        join_name.strip(),
+                        join_city.strip()
+                    )
 
                 if success:
 
@@ -655,7 +676,10 @@ def lobby_page(room):
     st.markdown("## 🗺️ Our Journey")
 
     show_journey_map(
-        room["distance"]
+        room["distance"],
+        room["total_distance_km"],
+        _map_point(room["player1_coords"], room["player1_city"]),
+        _map_point(room["player2_coords"], room["player2_city"])
     )
 
     # ============================================
@@ -953,7 +977,7 @@ def results_page(room):
     # --------------------------------------------
 
     journey_progress = min(
-        room["distance"] / 1184,
+        room["distance"] / room["total_distance_km"],
         1.0
     )
 
@@ -966,7 +990,7 @@ def results_page(room):
         <div style="text-align:center;">
             🗺️
             {room["distance"]}
-            / 1184 km travelled
+            / {room["total_distance_km"]} km travelled
         </div>
         """,
         unsafe_allow_html=True
@@ -976,7 +1000,7 @@ def results_page(room):
     # JOURNEY COMPLETE
     # --------------------------------------------
 
-    if room["distance"] >= 1184:
+    if room["distance"] >= room["total_distance_km"]:
 
         st.balloons()
 
