@@ -73,7 +73,9 @@ def show_journey_map(progress_km):
             ],
             mode="lines",
             line=dict(
-                width=4
+                width=4,
+                color="#E75480",
+                dash="dot"
             ),
             name="Journey"
         )
@@ -114,7 +116,9 @@ def show_journey_map(progress_km):
             lon=checkpoint_lons,
             mode="markers",
             marker=dict(
-                size=9
+                size=9,
+                color="#FFB6C9",
+                line=dict(width=1, color="#E75480")
             ),
             name="Checkpoints"
         )
@@ -130,7 +134,8 @@ def show_journey_map(progress_km):
             lon=[ISLAMABAD["lon"]],
             mode="markers+text",
             marker=dict(
-                size=14
+                size=14,
+                color="#C9184A"
             ),
             text=["📍 Islamabad"],
             textposition="top center",
@@ -148,7 +153,8 @@ def show_journey_map(progress_km):
             lon=[KARACHI["lon"]],
             mode="markers+text",
             marker=dict(
-                size=14
+                size=14,
+                color="#C9184A"
             ),
             text=["📍 Karachi"],
             textposition="bottom center",
@@ -166,7 +172,8 @@ def show_journey_map(progress_km):
             lon=[current_lon],
             mode="markers+text",
             marker=dict(
-                size=18
+                size=18,
+                color="#FF1493"
             ),
             text=["💗"],
             textposition="top center",
@@ -179,11 +186,16 @@ def show_journey_map(progress_km):
     # --------------------------------------------
 
     fig.update_geos(
-        scope="asia",
+        scope="world",
+        projection_type="natural earth",
         showcountries=True,
+        countrycolor="#FFD1DF",
         showland=True,
+        landcolor="#FFF6F9",
         showocean=True,
-        fitbounds="locations"
+        oceancolor="#EAF6FB",
+        showlakes=False,
+        showframe=False
     )
 
     fig.update_layout(
